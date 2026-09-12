@@ -1,0 +1,185 @@
+═══ ИЗУЧЕНИЕ QWEN9-MINI ROBLOX ═══
+
+─── 1. ЭТАЛОН: MODULESCRIPT (DataManager) ───
+
+--!strict
+local DataStoreService = game:GetService("DataStoreService")
+local Players = game:GetService("Players")
+
+local DataManager = {}
+
+local STORE_NAME = "PlayerData"
+local store = DataStoreService:GetDataStore(STORE_NAME)
+
+-- Типы
+export type PlayerData = {
+  money: number,
+  level: number,
+  inventory: { string },
+}
+
+local DEFAULT_DATA: PlayerData = {
+  money = 0,
+  level = 1,
+  inventory = {},
+}
+
+-- Загрузка
+function DataManager.load(player: Player): PlayerData?
+  local key = "player_" .. player.UserId
+  local ok, result = pcall(function()
+    return store:GetAsync(key)
+  end)
+  if not ok then
+    warn("[DataManager] load failed:", result)
+    return nil
+  end
+  if result == nil then
+    return table.clone(DEFAULT_DATA)
+  end
+  return result
+end
+
+-- Сохранение (read-modify-write через UpdateAsync)
+function DataManager.save(player: Player, data: PlayerData): boolean
+  local key = "player_" .. player.UserId
+  local ok, err = pcall(function()
+    store:UpdateAsync(key, function(old)
+      return data
+    end)
+  end)
+  if not ok then
+    warn("[DataManager] save failed:", err)
+    return false
+  end
+  return true
+end
+
+return DataManager
+
+─── 2. ЭТАЛОН: SERVER SCRIPT (загрузка/сохранение) ───
+
+--!strict
+local Players = game:GetService("Players")
+local DataManager = require(game.ServerScriptService.DataManager)
+
+local playerData: { [Player]: any } = {}
+
+Players.PlayerAdded:Connect(function(player: Player)
+  local data = DataManager.load(player)
+  if not data then return end
+  playerData[player] = data
+  -- записать в leaderstats
+  local leaderstats = Instance.new("Folder")
+  leaderstats.Name = "leaderstats"
+  leaderstats.Parent = player
+  local money = Instance.new("IntValue")
+  money.Name = "Money"
+  money.Value = data.money
+  money.Parent = leaderstats
+end)
+
+Players.PlayerRemoving:Connect(function(player: Player)
+  local data = playerData[player]
+  if data then
+    DataManager.save(player, data)
+    playerData[player] = nil
+  end
+end)
+
+-- Сохранение при выключении сервера
+game:BindToClose(function()
+  for player, data in pairs(playerData) do
+    DataManager.save(player, data)
+  end
+  task.wait(2)
+end)
+
+─── 3. ЭТАЛОН: REMOTEEVENT (безопасный) ───
+
+--!strict
+-- Сервер
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RemoteEvent = ReplicatedStorage:WaitForChild("BuyItem") :: RemoteEvent
+
+local COOLDOWN = 1
+local lastUse: { [Player]: number } = {}
+
+RemoteEvent.OnServerEvent:Connect(function(player: Player, itemId: any)
+  -- 1. Тип
+  if typeof(itemId) ~= "string" then return end
+  -- 2. Кулдаун
+  local now = tick()
+  if lastUse[player] and now - lastUse[player] < COOLDOWN then return end
+  lastUse[player] = now
+  -- 3. Логика
+  print(player.Name, "bought", itemId)
+end)
+
+─── 4. ЭТАЛОН: КЛИЕНТ ───
+
+--!strict
+-- LocalScript
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RemoteEvent = ReplicatedStorage:WaitForChild("BuyItem") :: RemoteEvent
+
+local button = script.Parent
+button.MouseButton1Click:Connect(function()
+  RemoteEvent:FireServer("sword_01")
+end)
+
+─── 5. ЭТАЛОН: JSON ───
+
+--!strict
+local HttpService = game:GetService("HttpService")
+
+-- Encode (таблица → строка)
+local data = { money = 100, level = 5 }
+local encoded = HttpService:JSONEncode(data)
+
+-- Decode (строка → таблица)
+local ok, decoded = pcall(function()
+  return HttpService:JSONDecode(encoded)
+end)
+if not ok then
+  warn("JSON broken")
+end
+
+─── 6. ЭТАЛОН: КАК ПЛОХО ───
+
+✗ local money = 0              -- нет типа
+✗ wait(1)                     -- устаревшая функция
+✗ spawn(function() end)       -- устаревшая функция
+✗ store:GetAsync(key)         -- без pcall
+✗ RemoteEvent.OnServerEvent:Connect(function(player, x)
+    giveMoney(player, x)      -- без валидации
+  end)
+✗ RemoteFunction:InvokeClient(player)  -- зависнет сервер
+✗ money.Value = 999999        -- клиент решает
+
+─── 7. ЭТАЛОН: КАК ХОРОШО ───
+
+✓ --!strict в начале
+✓ local money: number = 0
+✓ task.wait(1)
+✓ pcall(function() return store:GetAsync(key) end)
+✓ if typeof(x) ~= "number" then return end
+✓ if tick() - lastUse[p] < 1 then return end
+✓ Обновление через UpdateAsync
+
+─── 8. ЧЕК-ЛИСТ ПЕРЕД ВЫДАЧЕЙ ───
+
+  □ --!strict в начале?
+  □ Все переменные с типами?
+  □ DataStore в pcall?
+  □ Загрузка на PlayerAdded?
+  □ Сохранение на PlayerRemoving?
+  □ BindToClose есть?
+  □ RemoteEvent с валидацией?
+  □ Кулдаун на RemoteEvent?
+  □ Нет RemoteFunction:InvokeClient?
+  □ Нет wait/spawn/delay?
+  □ Нет глобальных переменных?
+  □ Сервер — источник истины?
+
+Подтверди: "Roblox изучен. Готов к задаче."
